@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"><title>Stock Price Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .status {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .status.connected { color: #4ade80; }
+        .status.disconnected { color: #f87171; }
+
+        .filter-bar {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+        .filter-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-btn:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+        .filter-btn.active {
+            background: white;
+            color: #667eea;
+            border-color: white;
+            font-weight: bold;
+        }
+
+        .stock-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .stock-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .stock-card:hover {
+            transform: translateY(-5px);
+        }
+        .stock-card.updated {
+            animation: pulse 0.5s;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        .symbol {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .price {
+            font-size: 36px;
+            font-weight: bold;
+            color: #1f2937;
+            margin-bottom: 5px;
+        }
+        .source {
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+        }
+        .timestamp {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📈 Real-Time Stock Prices</h1>
+        <div class="status" id="status">Connecting...</div>
+        <div class="filter-bar" id="filters">
+            <button class="filter-btn active" data-symbol="AAPL">AAPL</button>
+            <button class="filter-btn active" data-symbol="GOOGL">GOOGL</button>
+            <button class="filter-btn active" data-symbol="MSFT">MSFT</button>
+        </div>
+        <div class="stock-grid" id="stocks"></div>
+    </div>
+
+    <script>
+        let ws;
+        const stocks = new Map();
+        const statusEl = document.getElementById('status');
+        const stocksEl = document.getElementById('stocks');
+        const filtersEl = document.getElementById('filters');
+
+        function connect() {
+            ws = new WebSocket('ws://127.0.0.1:8080/ws');
+
+            ws.onopen = () => {
+                statusEl.textContent = '🟢 Connected';
+                statusEl.className = 'status connected';
+                
+                updateSubscription(); // Initial subscription
+            };
+
+            ws.onclose = () => {
+                statusEl.textContent = '🔴 Disconnected - Reconnecting...';
+                statusEl.className = 'status disconnected';
+                setTimeout(connect, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'connected') {
+                    console.log(data.message);
+                    return;
+                }
+
+                // Update stock data
+                const key = `${data.symbol}-${data.source}`;
+                stocks.set(key, data);
+                renderStocks();
+            };
+        }
+
+        function renderStocks() {
+            // au cas où on reçoit un message en retard
+            const activeSymbols = new Set();
+            filtersEl.querySelectorAll('.filter-btn.active').forEach(btn => {
+                activeSymbols.add(btn.dataset.symbol);
+            });
+
+            // On filtre le Map `stocks` pour ne garder que les actifs
+            const filteredStocks = new Map();
+            for (const [key, stock] of stocks.entries()) {
+                if (activeSymbols.has(stock.symbol)) {
+                    filteredStocks.set(key, stock);
+                }
+            }
+
+            const sortedStocks = Array.from(filteredStocks.values())
+                .sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+            stocksEl.innerHTML = sortedStocks.map(stock => {
+                const date = new Date(stock.timestamp * 1000);
+                return `
+                    <div class="stock-card updated" id="card-${stock.symbol}-${stock.source}">
+                        <div class="symbol">${stock.symbol}</div>
+                        <div class="price">$${stock.price.toFixed(2)}</div>
+                        <div class="source">${stock.source}</div>
+                        <div class="timestamp">Updated: ${date.toLocaleTimeString()}</div>
+                    </div>
+                `;
+            }).join('');
+
+            // Remove animation class after animation completes
+            setTimeout(() => {
+                document.querySelectorAll('.stock-card.updated').forEach(card => {
+                    card.classList.remove('updated');
+                });
+            }, 500);
+        }
+
+        function updateSubscription() {
+            const activeSymbols = [];
+            filtersEl.querySelectorAll('.filter-btn.active').forEach(btn => {
+                activeSymbols.push(btn.dataset.symbol);
+            });
+
+            console.log("Updating subscription to:", activeSymbols);
+
+            const sub_message = {
+                action: "subscribe",
+                symbols: activeSymbols
+            };
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(sub_message));
+            }
+            
+            // Nettoyer les cartes qui ne sont plus abonnées
+            renderStocks();
+        }
+
+        filtersEl.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                btn.classList.toggle('active');
+                updateSubscription();
+            });
+        });
+
+        connect();
+    </script>
+</body>
+</html>

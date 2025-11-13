@@ -91,7 +91,12 @@ async fn save_price(pool: &PgPool, price: &StockPrice) -> Result<()> {
     )
     .execute(pool)
     .await?;
-    info!("Saved {}: ${} from {}", price.symbol, price.price, price.source);
+
+    sqlx::query("NOTIFY new_price")
+        .execute(pool)
+        .await?;
+
+    info!("Saved and NOTIFIED: {}: ${} from {}", price.symbol, price.price, price.source);
     Ok(())
 }
 
@@ -305,7 +310,6 @@ async fn main() -> Result<()> {
             .with_state(pool.clone());
         let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
         info!("Web server listening on {}", addr);
-        info!("http://localhost:3000/latest-prices");
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let server = axum::serve(listener, app.into_make_service());
 
@@ -313,7 +317,7 @@ async fn main() -> Result<()> {
         let mut server_future = Box::pin(server.into_future());
 
         // Create interval for periodic fetching
-        let mut fetch_interval = interval(Duration::from_secs(60));
+        let mut fetch_interval = interval(Duration::from_secs(5));
 
         // Main loop
         info!("Service started. Waiting for interval ticks or shutdown signal...");
